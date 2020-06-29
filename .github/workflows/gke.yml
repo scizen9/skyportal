@@ -62,12 +62,18 @@ jobs:
     #     repository: $PROJECT_ID/$IMAGE
     #     tags: $GITHUB_SHA
 
-    - name: Build and push Docker image
-      uses: whoan/docker-build-with-cache-action@v5
-      with:
-        registry: gcr.io
-        image_name: $PROJECT_ID/$IMAGE
-        image_tag: $GITHUB_SHA
+    - name: Build
+      run: |-
+        docker build \
+          --tag "gcr.io/$PROJECT_ID/$IMAGE:$GITHUB_SHA" \
+          --build-arg GITHUB_SHA="$GITHUB_SHA" \
+          --build-arg GITHUB_REF="$GITHUB_REF" \
+          .
+
+    # Push the Docker image to Google Container Registry
+    - name: Publish
+      run: |-
+        docker push "gcr.io/$PROJECT_ID/$IMAGE:$GITHUB_SHA"
 
     - name: Clone deployment scripts
       run: |-
