@@ -97,7 +97,7 @@ jobs:
       run: |-
         cd deploy
         (cd base && ../kustomize edit set image gcr.io/PROJECT_ID/IMAGE:TAG=gcr.io/$PROJECT_ID/$IMAGE:$GITHUB_SHA)
-        ./config-apply.sh
+        PATH=$PATH:. ./config-apply.sh
         ./kustomize build base | kubectl apply -f -
         kubectl rollout status --timeout=5m deployment/$IMAGE
         kubectl get services -o wide
