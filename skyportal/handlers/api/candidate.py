@@ -29,7 +29,7 @@ class CandidateHandler(BaseHandler):
               name: obj_id
               required: true
               schema:
-                type: integer
+                type: string
           responses:
             200:
               content:
@@ -149,16 +149,20 @@ class CandidateHandler(BaseHandler):
             c = Candidate.get_obj_if_owned_by(
                 obj_id,
                 self.current_user,
-                options=[joinedload(Candidate.obj)
-                         .joinedload(Obj.thumbnails)
-                         .joinedload(Thumbnail.photometry)
-                         .joinedload(Photometry.instrument)
-                         .joinedload(Instrument.telescope)]
+                options=[
+                    joinedload(Candidate.obj)
+                    .joinedload(Obj.thumbnails)
+                    .joinedload(Thumbnail.photometry)
+                    .joinedload(Photometry.instrument)
+                    .joinedload(Instrument.telescope)
+                ],
             )
             if c is None:
                 return self.error("Invalid ID")
             c.comments = c.get_comments_owned_by(self.current_user)
-            return self.success(data=c)
+            candidate_info = c.to_dict()
+            candidate_info["last_detected"] = c.last_detected
+            return self.success(data=candidate_info)
 
         page_number = self.get_query_argument("pageNumber", None) or 1
         n_per_page = self.get_query_argument("numPerPage", None) or 25
@@ -170,7 +174,17 @@ class CandidateHandler(BaseHandler):
         filter_ids = self.get_query_argument("filterIDs", None)
         user_group_ids = [g.id for g in self.current_user.groups]
         user_filter_ids = [
-            g.filter.id for g in self.current_user.groups if g.filter is not None
+            filtr.id
+            for g in self.current_user.groups
+            for filtr in g.filters
+            if g.filters is not None
+        ]
+        user_accessible_group_ids = [g.id for g in self.current_user.accessible_groups]
+        user_accessible_filter_ids = [
+            filtr.id
+            for g in self.current_user.accessible_groups
+            for filtr in g.filters
+            if g.filters is not None
         ]
         if group_ids is not None:
             if isinstance(group_ids, str) and "," in group_ids:
@@ -196,6 +210,17 @@ class CandidateHandler(BaseHandler):
             # If 'groupIDs' & 'filterIDs' params not present in request, use all user groups
             group_ids = user_group_ids
             filter_ids = user_filter_ids
+
+        # Ensure user has access to specified groups/filters
+        if not (
+            all([gid in user_accessible_group_ids for gid in group_ids])
+            and all([fid in user_accessible_filter_ids for fid in filter_ids])
+        ):
+            return self.error(
+                "Insufficient permissions - you must only specify "
+                "groups/filters that you have access to."
+            )
+
         try:
             page = int(page_number)
         except ValueError:
@@ -211,9 +236,9 @@ class CandidateHandler(BaseHandler):
             )
             .filter(
                 Obj.id.in_(
-                    DBSession.query(Candidate.obj_id).filter(
-                        Candidate.filter_id.in_(filter_ids)
-                    )
+                    DBSession()
+                    .query(Candidate.obj_id)
+                    .filter(Candidate.filter_id.in_(filter_ids))
                 )
             )
             .order_by(Obj.last_detected.desc().nullslast(), Obj.id)
@@ -221,9 +246,9 @@ class CandidateHandler(BaseHandler):
         if unsaved_only == "true":
             q = q.filter(
                 Obj.id.notin_(
-                    DBSession.query(Source.obj_id).filter(
-                        Source.group_id.in_(group_ids)
-                    )
+                    DBSession()
+                    .query(Source.obj_id)
+                    .filter(Source.group_id.in_(group_ids))
                 )
             )
         if start_date is not None and start_date.strip() not in [
@@ -245,27 +270,32 @@ class CandidateHandler(BaseHandler):
                 return self.error("Page number out of range.")
             raise
         matching_source_ids = (
-            DBSession.query(Source.obj_id)
+            DBSession()
+            .query(Source.obj_id)
             .filter(Source.obj_id.in_([obj.id for obj in query_results["candidates"]]))
             .all()
         )
+        candidate_list = []
         for obj in query_results["candidates"]:
             obj.comments = obj.get_comments_owned_by(self.current_user)
             obj.is_source = (obj.id,) in matching_source_ids
             obj.passing_group_ids = [
                 f.group_id
                 for f in (
-                    Filter.query.filter(Filter.id.in_(user_filter_ids))
+                    Filter.query.filter(Filter.id.in_(user_accessible_filter_ids))
                     .filter(
                         Filter.id.in_(
-                            DBSession.query(Candidate.filter_id).filter(
-                                Candidate.obj_id == obj.id
-                            )
+                            DBSession()
+                            .query(Candidate.filter_id)
+                            .filter(Candidate.obj_id == obj.id)
                         )
                     )
                     .all()
                 )
             ]
+            candidate_list.append(obj.to_dict())
+            candidate_list[-1]["last_detected"] = obj.last_detected
+        query_results["candidates"] = candidate_list
         return self.success(data=query_results)
 
     @permissions(["Upload data"])
@@ -314,6 +344,7 @@ class CandidateHandler(BaseHandler):
         """
         data = self.get_json()
         schema = Obj.__schema__()
+
         passing_alert_id = data.pop("passing_alert_id", None)
         passed_at = data.pop("passed_at", None)
         if passed_at is not None:
@@ -322,6 +353,17 @@ class CandidateHandler(BaseHandler):
             filter_ids = data.pop("filter_ids")
         except KeyError:
             return self.error("Missing required filter_ids parameter.")
+        user_accessible_filter_ids = [
+            filtr.id
+            for g in self.current_user.accessible_groups
+            for filtr in g.filters
+            if g.filters is not None
+        ]
+        if not all([fid in user_accessible_filter_ids for fid in filter_ids]):
+            return self.error(
+                "Insufficient permissions - you must only specify "
+                "filters that you have access to."
+            )
 
         try:
             obj = schema.load(data)
@@ -332,8 +374,8 @@ class CandidateHandler(BaseHandler):
         filters = Filter.query.filter(Filter.id.in_(filter_ids)).all()
         if not filters:
             return self.error("At least one valid filter ID must be provided.")
-        DBSession.add(obj)
-        DBSession.add_all(
+        DBSession().add(obj)
+        DBSession().add_all(
             [
                 Candidate(
                     obj=obj,
@@ -383,7 +425,7 @@ class CandidateHandler(BaseHandler):
 
         schema = Obj.__schema__()
         try:
-            schema.load(data)
+            schema.load(data, partial=True)
         except ValidationError as e:
             return self.error(
                 "Invalid/missing parameters: " f"{e.normalized_messages()}"

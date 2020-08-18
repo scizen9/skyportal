@@ -1,61 +1,116 @@
-import React, { useState } from 'react';
-import PropTypes from 'prop-types';
-import { useDispatch } from 'react-redux';
+import React, { useState, useEffect } from "react";
+import PropTypes from "prop-types";
+import { useDispatch, useSelector } from "react-redux";
+import TextField from "@material-ui/core/TextField";
+import Autocomplete, {
+  createFilterOptions,
+} from "@material-ui/lab/Autocomplete";
 
-import * as Action from '../ducks/groups';
+import * as groupsActions from "../ducks/groups";
+import * as usersActions from "../ducks/users";
+
+const filter = createFilterOptions();
 
 const NewGroupUserForm = ({ group_id }) => {
   const dispatch = useDispatch();
-  const [formState, setState] = useState({
-    newUserEmail: "",
-    admin: false
+  const { allUsers } = useSelector((state) => state.users);
+  const [formState, setFormState] = useState({
+    newUserEmail: null,
+    admin: false,
   });
 
-  const handleChange = (event) => {
-    setState({
-      ...formState,
-      newUserEmail: event.target.value
-    });
-  };
+  useEffect(() => {
+    if (allUsers.length === 0) {
+      dispatch(usersActions.fetchUsers());
+    }
+  }, [dispatch, allUsers]);
 
   const handleSubmit = (event) => {
     event.preventDefault();
-    dispatch(Action.addGroupUser({
-      username: formState.newUserEmail,
-      admin: formState.admin,
-      group_id
-    }));
-    setState({
-      newUserEmail: "",
-      admin: false
+    dispatch(
+      groupsActions.addGroupUser({
+        username: formState.newUserEmail,
+        admin: formState.admin,
+        group_id,
+      })
+    );
+    setFormState({
+      newUserEmail: null,
+      admin: false,
     });
   };
 
   const toggleAdmin = (event) => {
-    setState({
+    setFormState({
       ...formState,
-      admin: event.target.checked
+      admin: event.target.checked,
     });
   };
 
   return (
     <div>
-      <input
-        type="text"
+      <Autocomplete
         id="newUserEmail"
         value={formState.newUserEmail}
-        onChange={handleChange}
+        onChange={(event, newValue) => {
+          if (typeof newValue === "string") {
+            setFormState({
+              newUserEmail: newValue,
+            });
+          } else if (newValue && newValue.inputValue) {
+            // Create a new value from the user input
+            setFormState({
+              newUserEmail: newValue.inputValue,
+            });
+          } else {
+            setFormState({ newUserEmail: newValue.username });
+          }
+        }}
+        filterOptions={(options, params) => {
+          const filtered = filter(options, params);
+
+          // Suggest the creation of a new value
+          if (params.inputValue !== "") {
+            filtered.push({
+              inputValue: params.inputValue,
+              username: `Add "${params.inputValue}"`,
+            });
+          }
+
+          return filtered;
+        }}
+        selectOnFocus
+        clearOnBlur
+        handleHomeEndKeys
+        options={allUsers}
+        getOptionLabel={(option) => {
+          // Value selected with enter, right from the input
+          if (typeof option === "string") {
+            return option;
+          }
+          // Add "xxx" option created dynamically
+          if (option.inputValue) {
+            return option.inputValue;
+          }
+          // Regular option
+          return option.username;
+        }}
+        renderOption={(option) => option.username}
+        style={{ width: 300, paddingBottom: 10 }}
+        freeSolo
+        renderInput={(params) => (
+          // eslint-disable-next-line react/jsx-props-no-spreading
+          <TextField {...params} label="Enter user email" />
+        )}
       />
-      &nbsp;
       <input type="checkbox" checked={formState.admin} onChange={toggleAdmin} />
-      Group Admin
-      &nbsp;&nbsp;
+      Group Admin &nbsp;&nbsp;
       <input type="submit" onClick={handleSubmit} value="Add user" />
     </div>
   );
 };
 NewGroupUserForm.propTypes = {
-  group_id: PropTypes.number.isRequired
+  group_id: PropTypes.number.isRequired,
 };
 
 export default NewGroupUserForm;

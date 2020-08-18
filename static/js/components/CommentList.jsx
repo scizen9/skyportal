@@ -6,6 +6,7 @@ import Tooltip from "@material-ui/core/Tooltip";
 import GroupIcon from "@material-ui/icons/Group";
 
 import dayjs from "dayjs";
+import utc from "dayjs/plugin/utc";
 import relativeTime from "dayjs/plugin/relativeTime";
 
 import * as sourceActions from "../ducks/source";
@@ -13,12 +14,16 @@ import styles from "./CommentList.css";
 import CommentEntry from "./CommentEntry";
 
 dayjs.extend(relativeTime);
+dayjs.extend(utc);
 
 const CommentList = ({ isCandidate }) => {
   const [hoverID, setHoverID] = useState(null);
 
   const handleMouseHover = (id, userProfile, author) => {
-    if (userProfile.roles.includes("Super admin") || userProfile.username === author) {
+    if (
+      userProfile.roles.includes("Super admin") ||
+      userProfile.username === author
+    ) {
       setHoverID(id);
     }
   };
@@ -52,27 +57,24 @@ const CommentList = ({ isCandidate }) => {
       >
         <div className={styles.commentHeader}>
           <span className={styles.commentUser}>
-            <span className={styles.commentUserName}>
-              {author}
-            </span>
+            <span className={styles.commentUserName}>{author}</span>
           </span>
           &nbsp;
           <span className={styles.commentTime}>
-            {dayjs().to(dayjs(created_at))}
+            {dayjs().to(dayjs.utc(`${created_at}Z`))}
           </span>
           &nbsp;
           <Tooltip title={groups.map((group) => group.name).join(", ")}>
-            <GroupIcon fontSize="small" style={{ paddingTop: "6px", paddingBottom: "0px" }} />
+            <GroupIcon
+              fontSize="small"
+              style={{ paddingTop: "6px", paddingBottom: "0px" }}
+            />
           </Tooltip>
         </div>
         <div className={styles.wrap} name={`commentDiv${id}`}>
-          <div className={styles.commentMessage}>
-            {text}
-          </div>
+          <div className={styles.commentMessage}>{text}</div>
           <Button
-            style={
-              hoverID === id ? { display: "block" } : { display: "none" }
-            }
+            style={hoverID === id ? { display: "block" } : { display: "none" }}
             size="small"
             variant="outlined"
             color="primary"
@@ -86,16 +88,12 @@ const CommentList = ({ isCandidate }) => {
             🗑
           </Button>
         </div>
-        {
-          attachment_name && (
-            <div>
-              Attachment:&nbsp;
-              <a href={`/api/comment/${id}/attachment`}>
-                {attachment_name}
-              </a>
-            </div>
-          )
-        }
+        {attachment_name && (
+          <div>
+            Attachment:&nbsp;
+            <a href={`/api/comment/${id}/attachment`}>{attachment_name}</a>
+          </div>
+        )}
       </span>
     )
   );
@@ -103,20 +101,19 @@ const CommentList = ({ isCandidate }) => {
     <div className={styles.comments}>
       {items}
       <br />
-      {
-        (!isCandidate && (acls.indexOf('Comment') >= 0)) &&
+      {!isCandidate && acls.indexOf("Comment") >= 0 && (
         <CommentEntry addComment={addComment} />
-      }
+      )}
     </div>
   );
 };
 
 CommentList.propTypes = {
-  isCandidate: PropTypes.bool
+  isCandidate: PropTypes.bool,
 };
 
 CommentList.defaultProps = {
-  isCandidate: false
+  isCandidate: false,
 };
 
 export default CommentList;

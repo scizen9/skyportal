@@ -18,14 +18,20 @@ import HelpOutlineIcon from "@material-ui/icons/HelpOutline";
 import Typography from "@material-ui/core/Typography";
 import { makeStyles, withStyles, useTheme } from "@material-ui/core/styles";
 import { useForm, Controller } from "react-hook-form";
+import PapaParse from "papaparse";
 
 import FormValidationError from "./FormValidationError";
 import * as Actions from "../ducks/source";
 
-const textAreaPlaceholderText = `mjd,flux,fluxerr,zp,magsys,instrument_id,filter,altdata.meta1
+const sampleFluxSpaceText = `mjd,flux,fluxerr,zp,magsys,instrument_id,filter,altdata.meta1
 58001.,22.,1.,30.,ab,1,ztfg,44.4
 58002.,23.,1.,30.,ab,1,ztfg,43.1
 58003.,22.,1.,30.,ab,1,ztfg,42.5`;
+
+const sampleMagSpaceText = `mjd,mag,magerr,limiting_mag,magsys,instrument_id,filter,altdata.meta1
+58001.,13.3,0.3,18.0,ab,1,ztfg,44.4
+58002.,13.1,0.2,18.0,ab,1,ztfg,43.1
+58003.,12.9,0.3,18.0,ab,1,ztfg,42.5`;
 
 const HtmlTooltip = withStyles((theme) => ({
   tooltip: {
@@ -37,14 +43,12 @@ const HtmlTooltip = withStyles((theme) => ({
   },
 }))(Tooltip);
 
-const getStyles = (groupID, groupIDs, theme) => (
-  {
-    fontWeight:
-      groupIDs.indexOf(groupID) === -1 ?
-        theme.typography.fontWeightRegular :
-        theme.typography.fontWeightMedium,
-  }
-);
+const getStyles = (groupID, groupIDs = [], theme) => ({
+  fontWeight:
+    groupIDs.indexOf(groupID) === -1
+      ? theme.typography.fontWeightRegular
+      : theme.typography.fontWeightMedium,
+});
 
 const UploadPhotometryForm = () => {
   const dispatch = useDispatch();
@@ -54,8 +58,28 @@ const UploadPhotometryForm = () => {
   const [csvData, setCsvData] = useState({});
   const [successMessage, setSuccessMessage] = useState("");
   const { id } = useParams();
-  const { handleSubmit, errors, reset, control, getValues } = useForm();
+  const {
+    handleSubmit,
+    errors,
+    reset,
+    control,
+    getValues,
+    setValue,
+  } = useForm();
   let formState = getValues();
+
+  const parseOptions = {
+    skipEmptyLines: "greedy",
+    delimitersToGuess: [
+      ",",
+      "\t",
+      " ",
+      "|",
+      ";",
+      PapaParse.RECORD_SEP,
+      PapaParse.UNIT_SEP,
+    ],
+  };
 
   const validateCsvData = () => {
     setShowPreview(false);
@@ -65,10 +89,10 @@ const UploadPhotometryForm = () => {
     if (!formState.csvData) {
       return "Missing CSV data";
     }
-    const delim = new RegExp(formState.delimiter);
-    let [header, ...dataRows] = formState.csvData.trim().split("\n");
-    header = header.split(delim);
-    dataRows = dataRows.map((row) => row.split(delim));
+    const [header, ...dataRows] = PapaParse.parse(
+      formState.csvData.trim(),
+      parseOptions
+    ).data;
     const headerLength = header.length;
     if (!(headerLength >= 2)) {
       return "Invalid input: Too few columns";
@@ -88,19 +112,25 @@ const UploadPhotometryForm = () => {
     if (!header.includes("flux") && !header.includes("mag")) {
       return "Invalid input: Missing required column: one of either mag or flux";
     }
-    if (header.includes("flux") && (!header.includes("zp"))) {
+    if (header.includes("flux") && !header.includes("zp")) {
       return "Invalid input: missing required column: zp";
     }
-    if (header.includes("flux") && (!header.includes("fluxerr"))) {
+    if (header.includes("flux") && !header.includes("fluxerr")) {
       return "Invalid input: missing required column: fluxerr";
     }
-    if (header.includes("mag") && (!header.includes("limiting_mag"))) {
+    if (header.includes("mag") && !header.includes("limiting_mag")) {
       return "Invalid input: missing required column: limiting_mag";
     }
-    if (formState.instrumentID === "multiple" && !header.includes("instrument_id")) {
+    if (
+      formState.instrumentID === "multiple" &&
+      !header.includes("instrument_id")
+    ) {
       return "Invalid input: missing required column: instrument_id";
     }
-    if (formState.instrumentID !== "multiple" && header.includes("instrument_id")) {
+    if (
+      formState.instrumentID !== "multiple" &&
+      header.includes("instrument_id")
+    ) {
       return "Invalid input: instrument_id already specified in select input";
     }
     setShowPreview(true);
@@ -113,26 +143,28 @@ const UploadPhotometryForm = () => {
   };
 
   const handleClickPreview = async (data) => {
-    let [header, ...dataRows] = data.csvData.trim().split("\n");
-    const delim = new RegExp(data.delimiter);
-    header = header.split(delim);
-    dataRows = dataRows.map((row) => row.split(delim));
+    const [header, ...dataRows] = PapaParse.parse(
+      data.csvData.trim(),
+      parseOptions
+    ).data;
     setCsvData({
       columns: header,
-      data: dataRows
+      data: dataRows,
     });
     setShowPreview(true);
   };
 
   const handleReset = () => {
-    reset({
-      delimiter: ",",
-      csvData: "",
-      instrumentID: "",
-      groupIDs: []
-    }, {
-      dirty: false
-    });
+    reset(
+      {
+        csvData: "",
+        instrumentID: "",
+        groupIDs: [],
+      },
+      {
+        dirty: false,
+      }
+    );
     setCsvData({});
   };
 
@@ -141,14 +173,16 @@ const UploadPhotometryForm = () => {
     const data = {
       obj_id: id,
       group_ids: formState.groupIDs,
-      altdata: {}
+      altdata: {},
     };
     if (formState.instrumentID !== "multiple") {
       data.instrument_id = formState.instrumentID;
     }
     csvData.columns.forEach((col, idx) => {
       if (col.startsWith("altdata.")) {
-        data.altdata[col.split("altdata.")[1]] = csvData.data.map((row) => row[idx]);
+        data.altdata[col.split("altdata.")[1]] = csvData.data.map(
+          (row) => row[idx]
+        );
       } else {
         data[col] = csvData.data.map((row) => row[idx]);
       }
@@ -183,15 +217,15 @@ const UploadPhotometryForm = () => {
     },
     textarea: {
       "::-webkit-input-placeholder": {
-        opacity: 0.2
+        opacity: 0.2,
       },
       "::-moz-placeholder": {
-        opacity: 0.2
+        opacity: 0.2,
       },
       ":-ms-input-placeholder": {
-        opacity: 0.2
-      }
-    }
+        opacity: 0.2,
+      },
+    },
   }));
   const classes = useStyles();
   const theme = useTheme();
@@ -207,6 +241,10 @@ const UploadPhotometryForm = () => {
     },
   };
 
+  if (!instrumentList || !userGroups) {
+    return <div>Loading...</div>;
+  }
+
   return (
     <div>
       <Typography variant="h5">
@@ -218,24 +256,40 @@ const UploadPhotometryForm = () => {
       <Card>
         <CardContent>
           <form onSubmit={handleSubmit(handleClickPreview)}>
+            <Box m={1}>
+              <Box component="span" mr={1}>
+                <Button
+                  onClick={() => {
+                    setValue("csvData", sampleFluxSpaceText);
+                  }}
+                >
+                  Load sample flux-space data
+                </Button>
+              </Box>
+              <Box component="span" ml={1}>
+                <Button
+                  onClick={() => {
+                    setValue("csvData", sampleMagSpaceText);
+                  }}
+                >
+                  Load sample mag-space data
+                </Button>
+              </Box>
+            </Box>
             <Box component="span" m={1}>
-              {
-                errors.csvData && (
-                  <FormValidationError
-                    message={errors.csvData.message}
-                  />
-                )
-              }
+              {errors.csvData && (
+                <FormValidationError message={errors.csvData.message} />
+              )}
               <FormControl>
                 <Controller
-                  as={(
+                  as={
                     <TextareaAutosize
                       name="csvData"
-                      placeholder={textAreaPlaceholderText}
+                      placeholder={sampleFluxSpaceText}
                       style={{ height: "20em", width: "40em" }}
                       className={classes.textarea}
                     />
-                  )}
+                  }
                   name="csvData"
                   control={control}
                   rules={{ validate: validateCsvData }}
@@ -243,28 +297,6 @@ const UploadPhotometryForm = () => {
               </FormControl>
             </Box>
             <Box m={1} style={{ display: "inline-block" }}>
-              <Box component="span" m={1}>
-                <FormControl className={classes.formControl}>
-                  <InputLabel id="delimiter-label">Delimiter</InputLabel>
-                  <Controller
-                    as={(
-                      <Select labelId="delimiter-label">
-                        <MenuItem value=",">
-                          Comma
-                        </MenuItem>
-                        <MenuItem value={`\\s+`}>
-                          Whitespace
-                        </MenuItem>
-                      </Select>
-                    )}
-                    name="delimiter"
-                    control={control}
-                    rules={{ required: true }}
-                    defaultValue=","
-                  />
-                </FormControl>
-              </Box>
-              <br />
               <Box display="flex" alignItems="center">
                 <Box component="span" m={1}>
                   <font size="small">
@@ -272,36 +304,34 @@ const UploadPhotometryForm = () => {
                     hover over the instrument name in the drop-down menu below.
                     <br />
                   </font>
-                  {
-                    errors.instrumentID && (
-                      <FormValidationError
-                        message="Select an instrument"
-                      />
-                    )
-                  }
+                  {errors.instrumentID && (
+                    <FormValidationError message="Select an instrument" />
+                  )}
                   <FormControl className={classes.formControl}>
                     <InputLabel id="instrumentSelectLabel">
                       Instrument
                     </InputLabel>
                     <Controller
-                      as={(
+                      as={
                         <Select labelId="instrumentSelectLabel">
                           <MenuItem value="multiple" key={0}>
                             Multiple (requires instrument_id column below)
                           </MenuItem>
-                          {
-                           instrumentList.map((instrument) => (
-                             <MenuItem value={instrument.id} key={instrument.id}>
-                               <Tooltip title={`Filters: ${instrument.filters.join(", ")}`}>
-                                 <span>
-                                   {`${instrument.name} (ID: ${instrument.id})`}
-                                 </span>
-                               </Tooltip>
-                             </MenuItem>
-                           ))
-                          }
+                          {instrumentList.map((instrument) => (
+                            <MenuItem value={instrument.id} key={instrument.id}>
+                              <Tooltip
+                                title={`Filters: ${instrument.filters.join(
+                                  ", "
+                                )}`}
+                              >
+                                <span>
+                                  {`${instrument.name} (ID: ${instrument.id})`}
+                                </span>
+                              </Tooltip>
+                            </MenuItem>
+                          ))}
                         </Select>
-                      )}
+                      }
                       name="instrumentID"
                       rules={{ required: true }}
                       control={control}
@@ -311,17 +341,13 @@ const UploadPhotometryForm = () => {
                 </Box>
               </Box>
               <Box component="span" m={1}>
-                {
-                  errors.groupIDs && (
-                    <FormValidationError
-                      message="Select at least one group"
-                    />
-                  )
-                }
+                {errors.groupIDs && (
+                  <FormValidationError message="Select at least one group" />
+                )}
                 <FormControl className={classes.formControl}>
                   <InputLabel id="select-groups-label">Groups</InputLabel>
                   <Controller
-                    as={(
+                    as={
                       <Select
                         labelId="select-groups-label"
                         id="selectGroups"
@@ -344,13 +370,17 @@ const UploadPhotometryForm = () => {
                           <MenuItem
                             key={group.id}
                             value={group.id}
-                            style={getStyles(group.name, formState.groupIDs, theme)}
+                            style={getStyles(
+                              group.name,
+                              formState.groupIDs,
+                              theme
+                            )}
                           >
                             {group.name}
                           </MenuItem>
                         ))}
                       </Select>
-                    )}
+                    }
                     name="groupIDs"
                     rules={{ validate: validateGroups }}
                     control={control}
@@ -362,7 +392,7 @@ const UploadPhotometryForm = () => {
             <Box m={1}>
               <HtmlTooltip
                 interactive
-                title={(
+                title={
                   <>
                     <p>
                       Use this form to upload flux- or mag-space photometry data
@@ -370,36 +400,29 @@ const UploadPhotometryForm = () => {
                     </p>
                     <p>
                       Required fields (flux-space):&nbsp;
-                      <code>mjd,flux,fluxerr,zp,magsys,filter[,instrument_id]</code>
+                      <code>
+                        mjd,flux,fluxerr,zp,magsys,filter[,instrument_id]
+                      </code>
                       <br />
                       Required fields (mag-space):&nbsp;
-                      <code>mjd,mag,magerr,limiting_mag,magsys,filter[,instrument_id]</code>
+                      <code>
+                        mjd,mag,magerr,limiting_mag,magsys,filter[,instrument_id]
+                      </code>
                       <br />
                       See the&nbsp;
                       <a href="https://skyportal.io/docs/api.html#/paths/~1api~1photometry/post">
                         API docs
                       </a>
-                      &nbsp;for other allowable fields (note: omit
-                      {" "}
-                      <code>obj_id</code>
-                      {" "}
-                      here).
+                      &nbsp;for other allowable fields (note: omit{" "}
+                      <code>obj_id</code> here).
                     </p>
                     <p>
-                      Other miscellanous metadata can be supplied by preceding the column
-                      name with
-                      {" "}
-                      <code>&quot;altdata.&quot;</code>
-                      {" "}
-                      (e.g.
-                      {" "}
-                      <code>&quot;altdata.calibrated_to&quot;</code>
-                      ).
-                      Such fields will ultimately be stored in the photometry table&apos;s
-                      {" "}
-                      <code>altdata</code>
-                      &nbsp;JSONB column, e.g.
-                      {" "}
+                      Other miscellanous metadata can be supplied by preceding
+                      the column name with <code>&quot;altdata.&quot;</code>{" "}
+                      (e.g. <code>&quot;altdata.calibrated_to&quot;</code>
+                      ). Such fields will ultimately be stored in the photometry
+                      table&apos;s <code>altdata</code>
+                      &nbsp;JSONB column, e.g.{" "}
                       <code>
                         {"{"}
                         &quot;calibrated_to&quot;: &quot;ps1&quot;, ...
@@ -408,7 +431,7 @@ const UploadPhotometryForm = () => {
                       .
                     </p>
                   </>
-                )}
+                }
               >
                 <HelpOutlineIcon />
               </HtmlTooltip>
@@ -416,10 +439,7 @@ const UploadPhotometryForm = () => {
             <Box m={1}>
               <Box component="span" m={1}>
                 <FormControl>
-                  <Button
-                    variant="contained"
-                    type="submit"
-                  >
+                  <Button variant="contained" type="submit">
                     Preview in Tabular Form
                   </Button>
                 </FormControl>
@@ -435,50 +455,42 @@ const UploadPhotometryForm = () => {
           </form>
         </CardContent>
       </Card>
-      {
-        (showPreview && csvData.columns) && (
-          <div>
-            <br />
-            <br />
-            <Card>
-              <CardContent>
-                <Box component="span" m={1}>
-                  <MUIDataTable
-                    title="Data Preview"
-                    columns={csvData.columns}
-                    data={csvData.data}
-                    options={(
-                      {
-                        search: false,
-                        filter: false,
-                        selectableRows: "none",
-                        download: false,
-                        print: false
-                      }
-                    )}
-                  />
-                </Box>
-              </CardContent>
-            </Card>
-            <br />
-            <Box component="span" m={1}>
-              <Button variant="contained" onClick={handleClickSubmit}>
-                Upload Photometry
-              </Button>
-            </Box>
-          </div>
-        )
-      }
-      {
-        (successMessage && !formState.dirty) && (
-          <div style={{ whiteSpace: "pre-line" }}>
-            <br />
-            <font color="blue">
-              {successMessage}
-            </font>
-          </div>
-        )
-      }
+      {showPreview && csvData.columns && (
+        <div>
+          <br />
+          <br />
+          <Card>
+            <CardContent>
+              <Box component="span" m={1}>
+                <MUIDataTable
+                  title="Data Preview"
+                  columns={csvData.columns}
+                  data={csvData.data}
+                  options={{
+                    search: false,
+                    filter: false,
+                    selectableRows: "none",
+                    download: false,
+                    print: false,
+                  }}
+                />
+              </Box>
+            </CardContent>
+          </Card>
+          <br />
+          <Box component="span" m={1}>
+            <Button variant="contained" onClick={handleClickSubmit}>
+              Upload Photometry
+            </Button>
+          </Box>
+        </div>
+      )}
+      {successMessage && !formState.dirty && (
+        <div style={{ whiteSpace: "pre-line" }}>
+          <br />
+          <font color="blue">{successMessage}</font>
+        </div>
+      )}
     </div>
   );
 };
