@@ -1,7 +1,8 @@
 import tornado.web
 
 from baselayer.app.app_server import MainPageHandler
-from baselayer.app import model_util as baselayer_model_util
+
+# from baselayer.app import model_util as baselayer_model_util
 from baselayer.log import make_log
 
 from skyportal.handlers import BecomeUserHandler, LogoutHandler
@@ -219,9 +220,9 @@ def make_app(cfg, baselayer_handlers, baselayer_settings):
 
     app = tornado.web.Application(handlers, **settings)
     models.init_db(**cfg['database'])
-    baselayer_model_util.create_tables()
-    model_util.refresh_enums()
-    model_util.setup_permissions()
+    # baselayer_model_util.create_tables()
+    # model_util.refresh_enums()
+    # model_util.setup_permissions()
     app.cfg = cfg
 
     admin_token = model_util.provision_token()
